@@ -83,6 +83,15 @@ mc.dynamics <- run.sim(a = a)
 sp.dyn <- sapply(mc.dynamics, colSums)
 sp.dyn <- (t(sp.dyn))
 #head(sp.dyn)
-matplot(sp.dyn, type = 'l')
+
+png(filename = "figures/mc-dynamics.png", height = 6, width = 6, units = "in", res = 300)
+matplot(sp.dyn, type = 'l', yaxt = "n", xaxt = "n", ylab = "", xlab = "", col = viridis::viridis(20))
+axis(side = 1, labels = T, lwd.ticks = 2)
+axis(side = 2, labels = T, las = 1, lwd.ticks = 2)
+box(lwd = 2)
+mtext(side = 1, line = 3, text = "Time", cex = 1.5)
+mtext(side = 2, line = 3, text = "Abundance", cex = 1.5)
+dev.off()
+
 div.part(mc.dynamics[[10000]])
 
