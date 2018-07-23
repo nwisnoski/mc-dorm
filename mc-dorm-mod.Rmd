@@ -1,0 +1,178 @@
+---
+title: "Dormancy in metacommunities"
+author: "Nathan Wisnoski"
+date: "7/16/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+library(tidyverse)
+library(vegan)
+library(progress)
+library(viridis)
+library(adespatial)
+
+
+
+source("make_landscape.R")
+```
+
+
+### Define model conditions
+```{r}
+set.seed(47405)
+
+tsteps <- 100      # Number of time steps in model
+dt <- 1    # precision for euler method integration
+
+S <- 20 # Number of species
+M <- 100 # Number of sites
+
+```
+
+# Generate the landscape
+```{r}
+# Generate the landscape randomly, 
+# coarse parameter is the spatial structure, bigger values more structure, 
+# random is x/y-slope = 0 and coarse ~ 1
+# xslope and yslope control directional gradients
+landscape <- make.landscape(sites = M, xslope = 0.1, yslope = 0, coarse = 1000, envvars = 1)
+coords <- landscape$coords
+env <- landscape$env
+plot(coords, pch = 20, cex = 2, col = viridis(M)[rank(env)], asp = 1,
+     xlim = c(0,100), ylim = c(0,100))
+
+
+# Generate patch connectivity using dbMEM and visualize
+geo.dists <- dist(landscape$coords)
+mc.weighted <- listw.candidates(coords, nb = 'pcnm', weights = 'fdown')
+
+plot(coords, pch = 20, cex = 2, col = viridis(M)[rank(env)], asp = 1,
+     xlim = c(0,100), ylim = c(0,100))
+plot(mc.weighted[[1]], coords, col = adjustcolor("black", alpha.f = 0.1), add = T)
+
+
+```
+
+### Define parameters
+```{r}
+# density independent growth
+max.growth <- runif(S) + 1
+# optimal env conditions
+o.comp <- runif(S, min = range(env)[1], max = range(env)[2])
+# niche breadths, 
+# low nb.spec = more specialists, high nb.spec = more generalists
+# low nb.var = most species follow nb.spec, high nb.var = greater mix of species strategies
+nb.spec <- 1
+nb.var <- 1
+sig.comp <- rgamma(S, shape = nb.spec, scale = nb.var)
+
+d.cctradeoff <- function(max.growth, strength = 0.5){
+  -max.growth*strength + abs(min(-max.growth*strength))
+}
+d <- d.cctradeoff(0.9)
+
+# beverton-holt alpha
+a <- 1e-3
+
+```
+
+### Define model
+```{r}
+
+# initialize result array, Species X Sites X Time 
+results.N <- array(NA, c(S, M, tsteps), 
+                   dimnames = list(c(paste0("sp",1:S)), c(paste0("site",1:M)), c(1:tsteps)))
+results.D <- array(NA, c(S, M, tsteps),
+                   dimnames = list(c(paste0("sp",1:S)), c(paste0("site",1:M)), c(1:tsteps)))
+
+results.N[,,1] <- matrix(rpois(M*S, 1), nrow = S, ncol = M)
+results.D[,,1] <- A*0
+
+
+R.jx <- function(env.xy, max.growth, o.comp, sig.comp){
+  max.growth * exp(-((env.xy - o.comp)^2/(2*sig.comp^2)))
+}
+
+competition <- function(N,a) {
+	return( 1 / ( 1 + a*(sum(N))))
+}
+
+disperse <- function(d, N, M){
+  d*((rowSums(N) - N) / (M-1) - N)
+}
+
+for(t in 1:(tsteps / dt - 1)){
+  # Init or update progress bar
+  if(t == 1) pb <- progress_bar$new(total = (tsteps / dt), force = T)
+  pb$update(ratio = t/(tsteps / dt))
+  
+  N.t <- results.N[,,t]
+  D.t <- results.D[,,t]
+  
+  # calculates growth rates for each species (rows) in each site (cols)
+  # dimensions = S x M
+  R.t <- apply(X = env, MARGIN = 1, FUN = R.jx, max.growth, o.comp, sig.comp)
+  
+  # calculate competition at this time
+  comp.t <- apply(N.t, MARGIN = 2, FUN = competition, a = a)
+  N.t0 <- R.t * N.t * comp.t
+  
+  N.t1 <- N.t0 + disperse(d = d, N = N.t0, M = M)
+  
+  results.N[,,t+1] <- ifelse(N.t1 > 1, N.t1, 0)
+  results.D[,,t+1] <- 0
+}
+
+for(t in 1:tsteps){
+  richness.dynamics[t,] <- as.vector(specnumber(t(results.N[,,t])))
+}
+
+gamma.dynamics <- vector(length = tsteps)
+for(t in 1:tsteps){
+  gamma.dynamics[t] <- sum(rowSums(results.N[,,t]) > 0)
+}
+
+diversity.dynamics <- data.frame(time = seq(1, tsteps), mean_alpha = rowMeans(richness.dynamics), gamma = gamma.dynamics)
+
+
+diversity.dynamics %>% gather(mean_alpha, gamma, key = "scale", value = "diversity") %>% 
+  ggplot(aes(x = time, y = diversity, color = scale)) + 
+  geom_point() + 
+  geom_line()
+```
+
+### plot model output
+```{r}
+# z1 <- apply(results.N, 3L, c)
+# z2 <- expand.grid(dimnames(results.N)[1:2])
+# data.frame(z2, z1)
+# results.df <- as.data.frame.table(results.N)
+# colnames(results.df) <- c("species", "site", "time", "abundance")
+# 
+# richness.dynamics <- matrix(NA, ncol = M, nrow = tsteps)
+# colnames(richness.dynamics) <- paste0("site",1:M)
+
+for(t in 1:tsteps){
+  richness.dynamics[t,] <- as.vector(specnumber(t(results.N[,,t])))
+}
+
+gamma.dynamics <- vector(length = tsteps)
+for(t in 1:tsteps){
+  gamma.dynamics[t] <- sum(rowSums(results.N[,,t]) > 0)
+}
+
+diversity.dynamics <- data.frame(time = seq(1, tsteps), mean_alpha = rowMeans(richness.dynamics), gamma = gamma.dynamics)
+
+
+diversity.dynamics %>% gather(mean_alpha, gamma, key = "scale", value = "diversity") %>% 
+  ggplot(aes(x = time, y = diversity, color = scale)) + 
+  geom_point() + 
+  geom_line()
+  
+```
+
+
+
