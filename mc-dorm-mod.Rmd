@@ -53,7 +53,29 @@ plot(coords, pch = 20, cex = 2, col = viridis(M)[rank(env)], asp = 1,
      xlim = c(0,100), ylim = c(0,100))
 plot(mc.weighted[[1]], coords, col = adjustcolor("black", alpha.f = 0.1), add = T)
 
+library(igraph)
+neigh <- mc.weighted$DBEM_PCNM$neighbours
+ws <- mc.weighted$DBEM_PCNM$weights
 
+create.edge.list <- function(L){
+  edge.list = matrix(NA, nrow = 0, ncol = 2)
+  for(i in 1:length(L)){
+    for(j in 1:length(L[[i]])){
+      edge.list = rbind(edge.list, cbind(i, L[[i]][j]))
+    }
+  }
+  return(edge.list)
+}
+
+spatial.edges <- create.edge.list(neigh)
+spatial.weights <- create.edge.list(ws)[,-1]
+
+spatial.graph <- graph_from_edgelist(spatial.edges)
+E(spatial.graph)$weight <- spatial.weights
+plot(spatial.graph)
+adj.mat <- as_adjacency_matrix(spatial.graph, attr = "weight")
+adj.mat <- as.matrix(adj.mat)
+adj.mat
 ```
 
 ### Define parameters
@@ -80,6 +102,36 @@ a <- 3e-3
 
 ```
 
+### Metacom Functions
+```{r}
+R.jx <- function(env.xy, max.growth, o.comp, sig.comp){
+  max.growth * exp(-((env.xy - o.comp)^2/(2*sig.comp^2)))
+}
+  
+competition <- function(N,a) {
+  return( 1 / ( 1 + a*(sum(N))))
+}
+  
+# disperse <- function(d, N, M){
+#   d*((rowSums(N) - N) / (M-1) - N)
+# }
+
+disperse <- function(d, adj.mat, N, M){
+  
+  # calculate dispersing individuals
+  dispersers = d * t(N)
+  
+  # standardize geographic distances, establish barriers via adjacency mat
+  connectivity.mat = stdize(as.matrix(geo.dists)) * adj.mat
+  
+  # disperse individuals 
+  dispersers = t(connectivity.mat %*% dispersers)
+  return(dispersers)
+}
+  
+```
+
+
 ### Define model
 ```{r}
 run_sim <- function(d){
@@ -95,18 +147,6 @@ run_sim <- function(d){
   results.D[,,1] <- matrix(0, nrow = S, ncol = M)
   
   
-  R.jx <- function(env.xy, max.growth, o.comp, sig.comp){
-    max.growth * exp(-((env.xy - o.comp)^2/(2*sig.comp^2)))
-  }
-  
-  competition <- function(N,a) {
-  	return( 1 / ( 1 + a*(sum(N))))
-  }
-  
-  disperse <- function(d, N, M){
-    d*((rowSums(N) - N) / (M-1) - N)
-  }
-  
   for(t in 1:(tsteps / dt - 1)){
     # Init or update progress bar
     if(t == 1) pb <- progress_bar$new(total = (tsteps / dt), force = T)
@@ -121,9 +161,13 @@ run_sim <- function(d){
     
     # calculate competition at this time
     comp.t <- apply(N.t, MARGIN = 2, FUN = competition, a = a)
+    
+    # growth
     N.t0 <- R.t * N.t * comp.t
     
-    N.t1 <- N.t0 + disperse(d = d, N = N.t0, M = M)
+    # separate dispersers, then calculate dispersal, and re-add
+    
+    N.t1 <- N.t0 * (1-d) + disperse(d = d, N = N.t0, M = M, adj.mat = adj.mat)
     
     results.N[,,t+1] <- ifelse(N.t1 > 1, N.t1, 0)
     results.D[,,t+1] <- 0
@@ -137,6 +181,53 @@ run_sim <- function(d){
 }
 
 
+```
+
+
+```{r}
+nsims <- 10
+running.out <- matrix(NA, nrow = 0, ncol = 4)
+for(i in 1:nsims){
+  print(paste("Simulation",i,"of",nsims,"."))
+  # update params
+  # density independent growth
+  max.growth <- runif(S) + 1
+  # optimal env conditions
+  o.comp <- runif(S, min = range(env)[1], max = range(env)[2])
+  # niche breadths, 
+  # low nb.spec = more specialists, high nb.spec = more generalists
+  # low nb.var = most species follow nb.spec, high nb.var = greater mix of species strategies
+  nb.spec <- 1
+  nb.var <- 2
+  
+  sig.comp <- seq(1, S)
+  # sig.comp <- rgamma(S, shape = nb.spec, scale = nb.var)
+  
+  # set up dispersal vector
+  # d.list <- list(0, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 0.5, 0.75, 1)
+  d.list <- list(0)
+  out <- lapply(d.list, FUN = run_sim)
+  out <- matrix(unlist(out), ncol = 4, byrow = T)
+  running.out <- rbind(running.out,out)
+}
+
+running.out
+
+# d.list <- list(0, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 0.5, 0.75, 0.9, 1)
+# out <- lapply(d.list, FUN = run_sim)
+# out <- matrix(unlist(out), ncol = 4, byrow = T)
+colnames(running.out) <- c("dispersal", "alpha", "beta", "gamma")
+running.out %>% as_tibble() %>% 
+  gather(alpha, beta, gamma, key = "scale", value = "diversity") %>%
+  group_by(dispersal, scale) %>% 
+  mutate(mean_div = mean(diversity), se = sd(diversity)/n()) %>% 
+  ggplot(aes(x = dispersal, y = mean_div, color = scale)) + 
+  geom_point(alpha = 0.5, size = 2) + 
+  geom_errorbar(aes(ymin = mean_div - se, ymax = mean_div + se)) +
+  geom_line(alpha = 0.5) +
+  theme_minimal() +
+  #facet_grid(scale ~ .) +
+  #scale_x_log10(limits = c(1e-8, 1))
 ```
 
 ### plot model output
@@ -161,47 +252,5 @@ diversity.dynamics %>%
   ggplot(aes(x = time, y = diversity, color = scale)) + 
   geom_point() + 
   geom_line()
-```
-
-
-```{r}
-nsims <- 100
-running.out <- matrix(NA, ncol = 4)
-for(i in 1:nsims){
-  print(paste("Simulation",i,"of",nsims,"."))
-  # update params
-  # density independent growth
-  max.growth <- runif(S) + 1
-  # optimal env conditions
-  o.comp <- runif(S, min = range(env)[1], max = range(env)[2])
-  # niche breadths, 
-  # low nb.spec = more specialists, high nb.spec = more generalists
-  # low nb.var = most species follow nb.spec, high nb.var = greater mix of species strategies
-  nb.spec <- 1
-  nb.var <- 2
-  sig.comp <- rgamma(S, shape = nb.spec, scale = nb.var)
-  
-  # set up dispersal vector
-  d.list <- list(0, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 0.5, 0.75, 1)
-  out <- lapply(d.list, FUN = run_sim)
-  out <- matrix(unlist(out), ncol = 4, byrow = T)
-  running.out <- rbind(running.out,out)
-}
-
-# d.list <- list(0, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 0.5, 0.75, 0.9, 1)
-# out <- lapply(d.list, FUN = run_sim)
-# out <- matrix(unlist(out), ncol = 4, byrow = T)
-colnames(running.out) <- c("dispersal", "alpha", "beta", "gamma")
-running.out %>% as_tibble() %>% 
-  gather(alpha, beta, gamma, key = "scale", value = "diversity") %>%
-  group_by(dispersal, scale) %>% 
-  mutate(mean_div = mean(diversity), se = sd(diversity)/n()) %>% 
-  ggplot(aes(x = dispersal, y = mean_div, color = scale)) + 
-  geom_point(alpha = 0.5, size = 2) + 
-  geom_errorbar(aes(ymin = mean_div - se, ymax = mean_div + se)) +
-  geom_line(alpha = 0.5) +
-  theme_minimal() +
-  #facet_grid(scale ~ .) +
-  scale_x_log10()
 ```
 
