@@ -13,7 +13,7 @@ library(vegan)
 library(progress)
 library(viridis)
 library(adespatial)
-
+library(igraph)
 
 
 source("make_landscape.R")
@@ -53,7 +53,7 @@ plot(coords, pch = 20, cex = 2, col = viridis(M)[rank(env)], asp = 1,
      xlim = c(0,100), ylim = c(0,100))
 plot(mc.weighted[[1]], coords, col = adjustcolor("black", alpha.f = 0.1), add = T)
 
-library(igraph)
+
 neigh <- mc.weighted$DBEM_PCNM$neighbours
 ws <- mc.weighted$DBEM_PCNM$weights
 
@@ -98,8 +98,9 @@ d.cctradeoff <- function(max.growth, strength = 0.5){
 # d <- 0.01
 
 # beverton-holt alpha
-a <- 3e-3
+a <- 3e-4
 
+# dorm <- 0.3
 ```
 
 ### Metacom Functions
@@ -128,13 +129,26 @@ disperse <- function(d, adj.mat, N, M){
   dispersers = t(connectivity.mat %*% dispersers)
   return(dispersers)
 }
+
+dormancy <- function(dorm, N, D, R.t, comp.t){
+  
+  # if growth * competition is < 1, shift towards dormancy
+  D[which(R.t * comp.t < 1)] <- N[which(R.t * comp.t < 1)] * (dorm)
+  N[which(R.t * comp.t < 1)] <- N[which(R.t * comp.t < 1)] * (1-dorm)
+  
+  # if growth * competition > 1 and there are dormant propagules, reactivate
+  N[which(R.t * comp.t > 1 & D.t > 0)] <- D[which(R.t * comp.t > 1 & D.t > 0)] * dorm
+  D[which(R.t * comp.t > 1 & D.t > 0)] <- D[which(R.t * comp.t > 1 & D.t > 0)] * (1-dorm)
+  
+  return(list(N = N, D = D))
+}
   
 ```
 
 
 ### Define model
 ```{r}
-run_sim <- function(d){
+run_sim <- function(d, dorm, env.type){
   
   
   # initialize result array, Species X Sites X Time 
@@ -146,37 +160,62 @@ run_sim <- function(d){
   results.N[,,1] <- matrix(rpois(M*S, 1), nrow = S, ncol = M)
   results.D[,,1] <- matrix(0, nrow = S, ncol = M)
   
+  res <- matrix(NA, ncol = 5, nrow = 0)
   
-  for(t in 1:(tsteps / dt - 1)){
-    # Init or update progress bar
-    if(t == 1) pb <- progress_bar$new(total = (tsteps / dt), force = T)
-    pb$update(ratio = t/(tsteps / dt))
+  for(yes.dormancy in c(T,F)){
+    # perform once with and without dormancy
     
-    N.t <- results.N[,,t]
-    D.t <- results.D[,,t]
+      for(t in 1:(tsteps / dt - 1)){
+        # Init or update progress bar
+        if(t == 1) pb <- progress_bar$new(total = (tsteps / dt), force = T)
+        pb$update(ratio = t/(tsteps / dt))
+        
+        N.t <- results.N[,,t]
+        D.t <- results.D[,,t]
+        
+        if(env.type != "static"){
+          if(env.type == "random"){
+            env[,1] <- runif(length(env))
+          }
+        }
+        
+        # calculates growth rates for each species (rows) in each site (cols)
+        # dimensions = S x M
+        R.t <- apply(X = env, MARGIN = 1, FUN = R.jx, max.growth, o.comp, sig.comp)
+        
+        # calculate competition at this time
+        comp.t <- apply(N.t, MARGIN = 2, FUN = competition, a = a)
+        
+        # growth
+        N.t0 <- R.t * N.t * comp.t
+        
+        if(yes.dormancy){
+          dorm.out <- dormancy(dorm, N.t0, D.t, R.t, comp.t)
+          N.t0 <- dorm.out$N
+          D.t <- dorm.out$D
+        }
+        
+        
+        # separate dispersers, then calculate dispersal, and re-add
+        
+        N.t1 <- N.t0 * (1-d) + disperse(d = d, N = N.t0, M = M, adj.mat = adj.mat)
+        
+        results.N[,,t+1] <- ifelse(N.t1 > .1, N.t1, 0)
+        results.D[,,t+1] <- ifelse(D.t > .1, D.t, 0) 
+      }
     
-    # calculates growth rates for each species (rows) in each site (cols)
-    # dimensions = S x M
-    R.t <- apply(X = env, MARGIN = 1, FUN = R.jx, max.growth, o.comp, sig.comp)
-    
-    # calculate competition at this time
-    comp.t <- apply(N.t, MARGIN = 2, FUN = competition, a = a)
-    
-    # growth
-    N.t0 <- R.t * N.t * comp.t
-    
-    # separate dispersers, then calculate dispersal, and re-add
-    
-    N.t1 <- N.t0 * (1-d) + disperse(d = d, N = N.t0, M = M, adj.mat = adj.mat)
-    
-    results.N[,,t+1] <- ifelse(N.t1 > 1, N.t1, 0)
-    results.D[,,t+1] <- 0
-  }
+      alpha <- mean(specnumber(t(results.N[,,tsteps] + results.D[,,tsteps])))
+      gamma <- sum(rowSums(results.N[,,t] + results.D[,,tsteps]) > 0)
+      beta <- gamma / alpha
+      beta <- ifelse(is.nan(beta), 0, beta)
+      
+      # write results to matrix
+      res <- rbind(res, cbind(dispersal = d, dormancy = as.numeric(yes.dormancy), alpha = alpha, beta = beta, gamma = gamma))
+      
+  } 
   
-  alpha <- mean(specnumber(t(results.N[,,tsteps])))
-  gamma <- sum(rowSums(results.N[,,t]) > 0)
-  beta <- gamma / alpha
-  return(cbind(dispersal = d, alpha = alpha, beta = beta, gamma = gamma))
+  
+  return(res)
   #return(results.N[,,tsteps])
 }
 
@@ -185,49 +224,71 @@ run_sim <- function(d){
 
 
 ```{r}
-nsims <- 10
-running.out <- matrix(NA, nrow = 0, ncol = 4)
+set.seed(47405)
+nsims <- 5
+# set up dispersal vector
+# d.list <- as.list(seq(0,1, by = 0.05))
+# d.list <- as.list(c(seq(from = 1, to = 9, by = 4)*1e-9,
+#   seq(from = 1, to = 9, by = 3)*1e-8,
+#   seq(from = 1, to = 9, by = 4)*1e-7,
+#   seq(from = 1, to = 9, by = 3)*1e-6,
+#   seq(from = 1, to = 9, by = 4)*1e-5,
+#   seq(from = 1, to = 9, by = 3)*1e-4,
+#   seq(from = 1, to = 9, by = 4)*1e-3,
+#   seq(from = 1, to = 9, by = 4)*1e-2,
+#   seq(from = 1, to = 9, by = 4)*1e-1, 1))
+
+d.list <- list(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 0.5, 1)
+#d.list <- list(0)
+running.out <- matrix(NA, nrow = 0, ncol = 5)
 for(i in 1:nsims){
   print(paste("Simulation",i,"of",nsims,"."))
   # update params
   # density independent growth
-  max.growth <- runif(S) + 1
+  # max.growth <- runif(S) + 1
+  max.growth <- 1.2
   # optimal env conditions
-  o.comp <- runif(S, min = range(env)[1], max = range(env)[2])
+  # o.comp <- runif(S, min = range(env)[1], max = range(env)[2])
+  o.comp <- 1/S * seq(1:S)
   # niche breadths, 
   # low nb.spec = more specialists, high nb.spec = more generalists
   # low nb.var = most species follow nb.spec, high nb.var = greater mix of species strategies
   nb.spec <- 1
   nb.var <- 2
   
-  sig.comp <- seq(1, S)
+  sig.comp <- seq(.5, S)
   # sig.comp <- rgamma(S, shape = nb.spec, scale = nb.var)
   
-  # set up dispersal vector
-  # d.list <- list(0, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 0.5, 0.75, 1)
-  d.list <- list(0)
-  out <- lapply(d.list, FUN = run_sim)
-  out <- matrix(unlist(out), ncol = 4, byrow = T)
-  running.out <- rbind(running.out,out)
+  out <- lapply(d.list, FUN = run_sim, env.type = "random", dorm = 0.5)
+  # unlist(out)[seq(1:length(unlist(out)))]
+  
+  for(i in 1:length(out)){
+    running.out <- rbind(running.out, out[[i]])
+  }
+  
+  # out <- matrix(unlist(out), ncol = 5, byrow = T)
+  # running.out <- rbind(running.out,out)
 }
 
-running.out
+
 
 # d.list <- list(0, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 0.5, 0.75, 0.9, 1)
 # out <- lapply(d.list, FUN = run_sim)
 # out <- matrix(unlist(out), ncol = 4, byrow = T)
-colnames(running.out) <- c("dispersal", "alpha", "beta", "gamma")
-running.out %>% as_tibble() %>% 
-  gather(alpha, beta, gamma, key = "scale", value = "diversity") %>%
-  group_by(dispersal, scale) %>% 
-  mutate(mean_div = mean(diversity), se = sd(diversity)/n()) %>% 
-  ggplot(aes(x = dispersal, y = mean_div, color = scale)) + 
+colnames(running.out) <- c("dispersal", "dormancy", "alpha", "beta", "gamma")
+running.out
+running.out %>% as_tibble() %>%
+  mutate(dormancy = factor(dormancy, levels = c(0,1), labels = c("no", "yes"))) %>% 
+  gather(alpha, beta, gamma, -dormancy, key = "scale", value = "diversity") %>%
+  group_by(dormancy, dispersal, scale) %>% 
+  mutate(mean_div = mean(diversity), se = sd(diversity)/n()) %>%
+  ggplot(aes(x = dispersal, y = mean_div, color =  dormancy, shape = scale)) + 
   geom_point(alpha = 0.5, size = 2) + 
   geom_errorbar(aes(ymin = mean_div - se, ymax = mean_div + se)) +
   geom_line(alpha = 0.5) +
   theme_minimal() +
-  #facet_grid(scale ~ .) +
-  #scale_x_log10(limits = c(1e-8, 1))
+  facet_grid(scale ~ ., scales = "free_y") +
+  scale_x_log10(limits = c(1e-9, 1))
 ```
 
 ### plot model output
