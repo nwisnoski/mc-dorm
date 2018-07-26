@@ -251,17 +251,17 @@ set.seed(47405)
 nsims <- 10
 # set up dispersal vector
 # d.list <- as.list(seq(0,1, by = 0.05))
-# d.list <- as.list(c(seq(from = 1, to = 9, by = 4)*1e-9,
-#   seq(from = 1, to = 9, by = 3)*1e-8,
-#   seq(from = 1, to = 9, by = 4)*1e-7,
-#   seq(from = 1, to = 9, by = 3)*1e-6,
-#   seq(from = 1, to = 9, by = 4)*1e-5,
-#   seq(from = 1, to = 9, by = 3)*1e-4,
-#   seq(from = 1, to = 9, by = 4)*1e-3,
-#   seq(from = 1, to = 9, by = 4)*1e-2,
-#   seq(from = 1, to = 9, by = 4)*1e-1, 1))
+d.list <- as.list(c(seq(from = 1, to = 9, by = 4)*1e-9,
+#  seq(from = 1, to = 9, by = 4)*1e-8,
+  seq(from = 1, to = 9, by = 4)*1e-7,
+#  seq(from = 1, to = 9, by = 4)*1e-6,
+  seq(from = 1, to = 9, by = 4)*1e-5,
+  seq(from = 1, to = 9, by = 4)*1e-4,
+  seq(from = 1, to = 9, by = 4)*1e-3,
+  seq(from = 1, to = 9, by = 4)*1e-2,
+  seq(from = 1, to = 9, by = 4)*1e-1, 1))
 
-d.list <- list(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 0.5, 1)
+# d.list <- list(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 0.5, 1)
 #d.list <- list(0)
 running.out <- matrix(NA, nrow = 0, ncol = 5)
 for(i in 1:nsims){
@@ -269,7 +269,7 @@ for(i in 1:nsims){
   # update params
   # density independent growth
   # max.growth <- runif(S) + 1
-  max.growth <- rep(1.2, S)
+   max.growth <- rep(1.2, S)
   # optimal env conditions
   # o.comp <- runif(S, min = range(env)[1], max = range(env)[2])
   o.comp <- 1/S * seq(1:S)
@@ -283,11 +283,11 @@ for(i in 1:nsims){
   # sig.comp <- rgamma(S, shape = nb.spec, scale = nb.var)
   
   # dormancy params
-  max.dorm <- 0.3
+  max.dorm <- 0.7
   responsiveness <- 0.5
-  precision <- 5
+  precision <- 10
   
-  out <- lapply(d.list, FUN = run_sim, env.type = "random")
+  out <- lapply(d.list, FUN = run_sim, env.type = "static")
   # unlist(out)[seq(1:length(unlist(out)))]
   
   for(i in 1:length(out)){
@@ -310,13 +310,14 @@ running.out %>% as_tibble() %>%
   gather(alpha, beta, gamma, -dormancy, key = "scale", value = "diversity") %>%
   group_by(dormancy, dispersal, scale) %>% 
   mutate(mean_div = mean(diversity), se = sd(diversity)/n()) %>%
-  ggplot(aes(x = dispersal, y = mean_div, color =  dormancy, shape = scale)) + 
+  ggplot(aes(x = dispersal, y = mean_div, color =  dormancy)) + 
   geom_point(alpha = 0.5, size = 2) + 
   geom_errorbar(aes(ymin = mean_div - se, ymax = mean_div + se)) +
   geom_line(alpha = 0.5) +
-  theme_minimal() +
+  theme_bw() +
   facet_grid(scale ~ ., scales = "free_y") +
-  scale_x_log10(limits = c(1e-9, 1))
+  scale_x_continuous(limits = c(1e-7, 1)) +
+  ggsave("figures/diversity-paritioning-and-dispersal.png", width =4, heigh = 8, units = "in")
 ```
 
 ### plot model output
