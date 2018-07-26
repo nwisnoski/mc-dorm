@@ -130,17 +130,38 @@ disperse <- function(d, adj.mat, N, M){
   return(dispersers)
 }
 
-dormancy <- function(dorm, N, D, R.t, comp.t){
+
+# further optimum is from environment, and smaller the niche breadth (sig comp), dormancy transitions faster
+dormancy <- function(env.xy, max.dorm, o.comp, sig.comp){
   
-  # if growth * competition is < 1, shift towards dormancy
-  D[which(R.t * comp.t < 1)] <- N[which(R.t * comp.t < 1)] * (dorm)
-  N[which(R.t * comp.t < 1)] <- N[which(R.t * comp.t < 1)] * (1-dorm)
+  max.dorm * (1 - exp(-((env.xy - o.comp)^2/(2*sig.comp^2))))
   
-  # if growth * competition > 1 and there are dormant propagules, reactivate
-  N[which(R.t * comp.t > 1 & D.t > 0)] <- D[which(R.t * comp.t > 1 & D.t > 0)] * dorm
-  D[which(R.t * comp.t > 1 & D.t > 0)] <- D[which(R.t * comp.t > 1 & D.t > 0)] * (1-dorm)
+  # # if growth * competition is < 1, shift towards dormancy
+  # D[which(R.t * comp.t < 1)] <- N[which(R.t * comp.t < 1)] * (dorm)
+  # N[which(R.t * comp.t < 1)] <- N[which(R.t * comp.t < 1)] * (1-dorm)
+  # 
+  # # if growth * competition > 1 and there are dormant propagules, reactivate
+  # N[which(R.t * comp.t > 1 & D.t > 0)] <- D[which(R.t * comp.t > 1 & D.t > 0)] * dorm
+  # D[which(R.t * comp.t > 1 & D.t > 0)] <- D[which(R.t * comp.t > 1 & D.t > 0)] * (1-dorm)
   
-  return(list(N = N, D = D))
+  # return(list(N = N, D = D))
+}
+
+# higher responsiveness is what proportion of the dormant propagules can reactivate at once
+# higher precision means that the conditions that would trigger responses have to be much closer to optimum
+resuscitate <- function(env.xy, responsiveness, o.comp, precision){
+  
+  responsiveness * exp(-((env.xy - o.comp)^2/(2*(1/precision)^2)))
+  
+  # # if growth * competition is < 1, shift towards dormancy
+  # D[which(R.t * comp.t < 1)] <- N[which(R.t * comp.t < 1)] * (dorm)
+  # N[which(R.t * comp.t < 1)] <- N[which(R.t * comp.t < 1)] * (1-dorm)
+  # 
+  # # if growth * competition > 1 and there are dormant propagules, reactivate
+  # N[which(R.t * comp.t > 1 & D.t > 0)] <- D[which(R.t * comp.t > 1 & D.t > 0)] * dorm
+  # D[which(R.t * comp.t > 1 & D.t > 0)] <- D[which(R.t * comp.t > 1 & D.t > 0)] * (1-dorm)
+  
+  # return(list(N = N, D = D))
 }
   
 ```
@@ -148,7 +169,7 @@ dormancy <- function(dorm, N, D, R.t, comp.t){
 
 ### Define model
 ```{r}
-run_sim <- function(d, dorm, env.type){
+run_sim <- function(d, env.type){
   
   
   # initialize result array, Species X Sites X Time 
@@ -186,15 +207,17 @@ run_sim <- function(d, dorm, env.type){
         # calculate competition at this time
         comp.t <- apply(N.t, MARGIN = 2, FUN = competition, a = a)
         
-        # growth
-        N.t0 <- R.t * N.t * comp.t
         
         if(yes.dormancy){
-          dorm.out <- dormancy(dorm, N.t0, D.t, R.t, comp.t)
-          N.t0 <- dorm.out$N
-          D.t <- dorm.out$D
+          now.dormant <- N.t * apply(X = env, MARGIN = 1, FUN = dormancy, max.dorm, o.comp, sig.comp)
+          now.active <- D.t * apply(X = env, MARGIN = 1, FUN = resuscitate, responsiveness, o.comp, precision)
+          N.t0 <- N.t - now.dormant + now.active
+          D.t <- D.t - now.active + now.dormant
         }
         
+        
+        # growth
+        N.t0 <- R.t * N.t * comp.t
         
         # separate dispersers, then calculate dispersal, and re-add
         
@@ -225,7 +248,7 @@ run_sim <- function(d, dorm, env.type){
 
 ```{r}
 set.seed(47405)
-nsims <- 5
+nsims <- 10
 # set up dispersal vector
 # d.list <- as.list(seq(0,1, by = 0.05))
 # d.list <- as.list(c(seq(from = 1, to = 9, by = 4)*1e-9,
@@ -246,7 +269,7 @@ for(i in 1:nsims){
   # update params
   # density independent growth
   # max.growth <- runif(S) + 1
-  max.growth <- 1.2
+  max.growth <- rep(1.2, S)
   # optimal env conditions
   # o.comp <- runif(S, min = range(env)[1], max = range(env)[2])
   o.comp <- 1/S * seq(1:S)
@@ -256,10 +279,15 @@ for(i in 1:nsims){
   nb.spec <- 1
   nb.var <- 2
   
-  sig.comp <- seq(.5, S)
+  sig.comp <- rep(.5, S)
   # sig.comp <- rgamma(S, shape = nb.spec, scale = nb.var)
   
-  out <- lapply(d.list, FUN = run_sim, env.type = "random", dorm = 0.5)
+  # dormancy params
+  max.dorm <- 0.3
+  responsiveness <- 0.5
+  precision <- 5
+  
+  out <- lapply(d.list, FUN = run_sim, env.type = "random")
   # unlist(out)[seq(1:length(unlist(out)))]
   
   for(i in 1:length(out)){
