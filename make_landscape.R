@@ -35,3 +35,13 @@ make.landscape <- function(xmax = 100, ymax = 100, coarse = 15, xslope = .005, y
   return(out)
 }
 
+
+create.edge.list <- function(L){
+  edge.list = matrix(NA, nrow = 0, ncol = 2)
+  for(i in 1:length(L)){
+    for(j in 1:length(L[[i]])){
+      edge.list = rbind(edge.list, cbind(i, L[[i]][j]))
+    }
+  }
+  return(edge.list)
+}
