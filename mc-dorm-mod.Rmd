@@ -27,7 +27,6 @@ set.seed(47405)
 tsteps <- 1000      # Number of time steps in model
 dt <- 1    # precision for euler method integration
 
-S <- 20 # Number of species
 M <- 10 # Number of sites
 
 ```
@@ -47,25 +46,18 @@ plot(coords, pch = 20, cex = 2, col = viridis(M)[rank(env)], asp = 1,
 
 # Generate patch connectivity using dbMEM and visualize
 geo.dists <- dist(landscape$coords)
-mc.weighted <- listw.candidates(coords, nb = 'pcnm', weights = 'fdown')
+mc.weighted <- listw.candidates(coords, nb = 'dnear', 
+                                weights = "fup",
+                                d2 = 1/2*max(geo.dists))
+#mc.weighted <- listw.candidates(coords, nb = 'pcnm', weights = 'fdown')
 
 plot(coords, pch = 20, cex = 2, col = viridis(M)[rank(env)], asp = 1,
      xlim = c(0,100), ylim = c(0,100))
 plot(mc.weighted[[1]], coords, col = adjustcolor("black", alpha.f = 0.1), add = T)
 
 
-neigh <- mc.weighted$DBEM_PCNM$neighbours
-ws <- mc.weighted$DBEM_PCNM$weights
-
-create.edge.list <- function(L){
-  edge.list = matrix(NA, nrow = 0, ncol = 2)
-  for(i in 1:length(L)){
-    for(j in 1:length(L[[i]])){
-      edge.list = rbind(edge.list, cbind(i, L[[i]][j]))
-    }
-  }
-  return(edge.list)
-}
+neigh <- mc.weighted[[1]]$neighbours
+ws <- mc.weighted[[1]]$weights
 
 spatial.edges <- create.edge.list(neigh)
 spatial.weights <- create.edge.list(ws)[,-1]
@@ -80,27 +72,25 @@ adj.mat
 
 ### Define parameters
 ```{r}
-
-# density independent growth
-max.growth <- runif(S) + 1
-# optimal env conditions
-o.comp <- runif(S, min = range(env)[1], max = range(env)[2])
-# niche breadths, 
-# low nb.spec = more specialists, high nb.spec = more generalists
-# low nb.var = most species follow nb.spec, high nb.var = greater mix of species strategies
-nb.spec <- 1
-nb.var <- 1
-sig.comp <- rgamma(S, shape = nb.spec, scale = nb.var)
-
-d.cctradeoff <- function(max.growth, strength = 0.5){
-  -max.growth*strength + abs(min(-max.growth*strength))
-}
-# d <- 0.01
-
-# beverton-holt alpha
-a <- 3e-4
-
-# dorm <- 0.3
+# 
+# # density independent growth
+# max.growth <- runif(S) + 1
+# # optimal env conditions
+# o.comp <- runif(S, min = range(env)[1], max = range(env)[2])
+# # niche breadths, 
+# # low nb.spec = more specialists, high nb.spec = more generalists
+# # low nb.var = most species follow nb.spec, high nb.var = greater mix of species strategies
+# nb.spec <- 1
+# nb.var <- 1
+# sig.comp <- rgamma(S, shape = nb.spec, scale = nb.var)
+# 
+# d.cctradeoff <- function(max.growth, strength = 0.5){
+#   -max.growth*strength + abs(min(-max.growth*strength))
+# }
+# # d <- 0.01
+# 
+# 
+# # dorm <- 0.3
 ```
 
 ### Metacom Functions
@@ -169,7 +159,7 @@ resuscitate <- function(env.xy, responsiveness, o.comp, precision){
 
 ### Define model
 ```{r}
-run_sim <- function(d, env.type){
+run_sim <- function(d, env.type, disturbance, ...){
   
   
   # initialize result array, Species X Sites X Time 
@@ -178,13 +168,16 @@ run_sim <- function(d, env.type){
   results.D <- array(NA, c(S, M, tsteps),
                      dimnames = list(c(paste0("sp",1:S)), c(paste0("site",1:M)), c(1:tsteps)))
   
+  # add active species to sites, seed banks are empty
   results.N[,,1] <- matrix(rpois(M*S, 1), nrow = S, ncol = M)
   results.D[,,1] <- matrix(0, nrow = S, ncol = M)
   
+  # create joint summary results output
   res <- matrix(NA, ncol = 5, nrow = 0)
   
+  # perform sims once with and without dormancy
   for(yes.dormancy in c(T,F)){
-    # perform once with and without dormancy
+    
     
       for(t in 1:(tsteps / dt - 1)){
         # Init or update progress bar
@@ -194,10 +187,20 @@ run_sim <- function(d, env.type){
         N.t <- results.N[,,t]
         D.t <- results.D[,,t]
         
-        if(env.type != "static"){
-          if(env.type == "random"){
-            env[,1] <- runif(length(env))
-          }
+        # if env.type is not static, either randomize it or oscillate
+        if(env.type == "random"){
+          env[,1] <- runif(length(env))
+        }
+        if(env.type == "synchronous"){
+          env[,1] <- env[,1] * (sin(2*pi*t/period) + 1)/2
+        }
+        
+        if(disturbance == T){
+          if(runif(1) < dist.freq){
+            # randomly choose site to disturb
+            N.t[,sample(1:M, size = ceiling(dist.extent*M), replace = F)] <- 0
+            
+          } 
         }
         
         # calculates growth rates for each species (rows) in each site (cols)
@@ -207,7 +210,7 @@ run_sim <- function(d, env.type){
         # calculate competition at this time
         comp.t <- apply(N.t, MARGIN = 2, FUN = competition, a = a)
         
-        
+        # if there is dormancy, then perform functions
         if(yes.dormancy){
           now.dormant <- N.t * apply(X = env, MARGIN = 1, FUN = dormancy, max.dorm, o.comp, sig.comp)
           now.active <- D.t * apply(X = env, MARGIN = 1, FUN = resuscitate, responsiveness, o.comp, precision)
@@ -226,13 +229,14 @@ run_sim <- function(d, env.type){
         results.N[,,t+1] <- ifelse(N.t1 > .1, N.t1, 0)
         results.D[,,t+1] <- ifelse(D.t > .1, D.t, 0) 
       }
-    
-      alpha <- mean(specnumber(t(results.N[,,tsteps] + results.D[,,tsteps])))
-      gamma <- sum(rowSums(results.N[,,t] + results.D[,,tsteps]) > 0)
+      
+      # summarize alpha, beta, and gamma diversity for this run
+      alpha <- mean(specnumber(t(results.N[,,tsteps] + 0*results.D[,,tsteps])))
+      gamma <- sum(rowSums(results.N[,,t] + 0*results.D[,,tsteps]) > 0)
       beta <- gamma / alpha
       beta <- ifelse(is.nan(beta), 0, beta)
       
-      # write results to matrix
+      # write results to the matrix
       res <- rbind(res, cbind(dispersal = d, dormancy = as.numeric(yes.dormancy), alpha = alpha, beta = beta, gamma = gamma))
       
   } 
@@ -248,20 +252,23 @@ run_sim <- function(d, env.type){
 
 ```{r}
 set.seed(47405)
-nsims <- 10
+nsims <- 3
+
+S <- 50 # Number of species
+
 # set up dispersal vector
 # d.list <- as.list(seq(0,1, by = 0.05))
-d.list <- as.list(c(seq(from = 1, to = 9, by = 4)*1e-9,
-#  seq(from = 1, to = 9, by = 4)*1e-8,
-  seq(from = 1, to = 9, by = 4)*1e-7,
-#  seq(from = 1, to = 9, by = 4)*1e-6,
-  seq(from = 1, to = 9, by = 4)*1e-5,
-  seq(from = 1, to = 9, by = 4)*1e-4,
-  seq(from = 1, to = 9, by = 4)*1e-3,
-  seq(from = 1, to = 9, by = 4)*1e-2,
-  seq(from = 1, to = 9, by = 4)*1e-1, 1))
+# d.list <- as.list(c(seq(from = 1, to = 9, by = 4)*1e-9,
+# #  seq(from = 1, to = 9, by = 4)*1e-8,
+#   seq(from = 1, to = 9, by = 4)*1e-7,
+# #  seq(from = 1, to = 9, by = 4)*1e-6,
+#   seq(from = 1, to = 9, by = 4)*1e-5,
+#   seq(from = 1, to = 9, by = 4)*1e-4,
+#   seq(from = 1, to = 9, by = 4)*1e-3,
+#   seq(from = 1, to = 9, by = 4)*1e-2,
+#   seq(from = 1, to = 9, by = 4)*1e-1, 1))
 
-# d.list <- list(0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 0.5, 1)
+d.list <- list(0, 1e-4, 1e-3, 1e-2, 0.1, 0.5, 1)
 #d.list <- list(0)
 running.out <- matrix(NA, nrow = 0, ncol = 5)
 for(i in 1:nsims){
@@ -269,25 +276,28 @@ for(i in 1:nsims){
   # update params
   # density independent growth
   # max.growth <- runif(S) + 1
-   max.growth <- rep(1.2, S)
+  max.growth <- rep(1.2, S)
   # optimal env conditions
   # o.comp <- runif(S, min = range(env)[1], max = range(env)[2])
   o.comp <- 1/S * seq(1:S)
   # niche breadths, 
-  # low nb.spec = more specialists, high nb.spec = more generalists
-  # low nb.var = most species follow nb.spec, high nb.var = greater mix of species strategies
-  nb.spec <- 1
-  nb.var <- 2
+  sig.comp <- rep(.2, S)
   
-  sig.comp <- rep(.5, S)
-  # sig.comp <- rgamma(S, shape = nb.spec, scale = nb.var)
   
-  # dormancy params
-  max.dorm <- 0.7
-  responsiveness <- 0.5
-  precision <- 10
+  # dormancy params # these don't really have a big effect on the outcomes in static or random environments
+  max.dorm <- .5
+  responsiveness <- .5
+  precision <- .5
   
-  out <- lapply(d.list, FUN = run_sim, env.type = "static")
+  # beverton-holt alpha
+  a <- 1e-4
+
+  # disturbance frequency if disturbance
+  dist.freq <- 0.01 # freq of a disturbance
+  dist.extent <- 2/M # what fraction of patches disturbed
+  
+  out <- lapply(d.list, FUN = run_sim, env.type = "static", disturbance = T,
+                period = 100, dist.freq, dist.extent)
   # unlist(out)[seq(1:length(unlist(out)))]
   
   for(i in 1:length(out)){
@@ -311,12 +321,12 @@ running.out %>% as_tibble() %>%
   group_by(dormancy, dispersal, scale) %>% 
   mutate(mean_div = mean(diversity), se = sd(diversity)/n()) %>%
   ggplot(aes(x = dispersal, y = mean_div, color =  dormancy)) + 
-  geom_point(alpha = 0.5, size = 2) + 
+  geom_point(alpha = 0.25, size = 2) + 
   geom_errorbar(aes(ymin = mean_div - se, ymax = mean_div + se)) +
   geom_line(alpha = 0.5) +
   theme_bw() +
   facet_grid(scale ~ ., scales = "free_y") +
-  scale_x_continuous(limits = c(1e-7, 1)) +
+  scale_x_continuous() +
   ggsave("figures/diversity-paritioning-and-dispersal.png", width =4, heigh = 8, units = "in")
 ```
 
