@@ -27,7 +27,7 @@ set.seed(47405)
 tsteps <- 1000      # Number of time steps in model
 dt <- 1    # precision for euler method integration
 
-M <- 10 # Number of sites
+M <- 50 # Number of sites
 
 ```
 
@@ -37,7 +37,7 @@ M <- 10 # Number of sites
 # coarse parameter is the spatial structure, bigger values more structure, 
 # random is x/y-slope = 0 and coarse ~ 1
 # xslope and yslope control directional gradients
-landscape <- make.landscape(sites = M, xslope = 0.1, yslope = 0, coarse = 1000, envvars = 1)
+landscape <- make.landscape(sites = M, xslope = 0.1, yslope = 0, coarse = 10000, envvars = 1)
 coords <- landscape$coords
 env <- landscape$env
 plot(coords, pch = 20, cex = 2, col = viridis(M)[rank(env)], asp = 1,
@@ -106,16 +106,29 @@ competition <- function(N,a) {
 # disperse <- function(d, N, M){
 #   d*((rowSums(N) - N) / (M-1) - N)
 # }
+# disperse <- function(d, adj.mat, N, M, scaling = 0.01){
+#   
+#   # calculate dispersing individuals
+#   dispersers = d * t(N)
+#   
+#   # convert geographic distances to dispersal rates
+#   connectivity.mat = exp(-as.matrix(geo.dists)*scaling)
+#   
+#   # disperse individuals 
+#   dispersers = t(connectivity.mat %*% dispersers)
+#   return(dispersers)
+# }
+
 
 disperse <- function(d, adj.mat, N, M){
-  
+
   # calculate dispersing individuals
   dispersers = d * t(N)
-  
+
   # standardize geographic distances, establish barriers via adjacency mat
   connectivity.mat = stdize(as.matrix(geo.dists)) * adj.mat
-  
-  # disperse individuals 
+
+  # disperse individuals
   dispersers = t(connectivity.mat %*% dispersers)
   return(dispersers)
 }
@@ -154,6 +167,20 @@ resuscitate <- function(env.xy, responsiveness, o.comp, precision){
   # return(list(N = N, D = D))
 }
   
+
+synchronize.env <- function(env, t, period, moran = F){
+  if(moran == T){
+    env * (sin(2*pi*t/period) + 1)/2
+  }
+  else (env + sin(2*pi*t/period) + 1)/3
+}
+
+asynchronize.env <- function(env, t, period, moran = F){
+  if(moran == T){
+    env * (sin(seq(1, M)*2*pi/M + (2*pi/period)*t) + 1)/2
+  }
+  else (env + sin(seq(1, M)*2*pi/M + (2*pi/period)*t) + 1)/3
+}
 ```
 
 
@@ -177,73 +204,79 @@ run_sim <- function(d, env.type, disturbance, ...){
   
   # perform sims once with and without dormancy
   for(yes.dormancy in c(T,F)){
-    
-    
-      for(t in 1:(tsteps / dt - 1)){
-        # Init or update progress bar
-        if(t == 1) pb <- progress_bar$new(total = (tsteps / dt), force = T)
-        pb$update(ratio = t/(tsteps / dt))
-        
-        N.t <- results.N[,,t]
-        D.t <- results.D[,,t]
-        
-        # if env.type is not static, either randomize it or oscillate
-        if(env.type == "random"){
-          env[,1] <- runif(length(env))
-        }
-        if(env.type == "synchronous"){
-          env[,1] <- env[,1] * (sin(2*pi*t/period) + 1)/2
-        }
-        
-        if(disturbance == T){
-          if(runif(1) < dist.freq){
-            # randomly choose site to disturb
-            N.t[,sample(1:M, size = ceiling(dist.extent*M), replace = F)] <- 0
-            
-          } 
-        }
-        
-        # calculates growth rates for each species (rows) in each site (cols)
-        # dimensions = S x M
-        R.t <- apply(X = env, MARGIN = 1, FUN = R.jx, max.growth, o.comp, sig.comp)
-        
-        # calculate competition at this time
-        comp.t <- apply(N.t, MARGIN = 2, FUN = competition, a = a)
-        
-        # if there is dormancy, then perform functions
-        if(yes.dormancy){
-          now.dormant <- N.t * apply(X = env, MARGIN = 1, FUN = dormancy, max.dorm, o.comp, sig.comp)
-          now.active <- D.t * apply(X = env, MARGIN = 1, FUN = resuscitate, responsiveness, o.comp, precision)
-          N.t0 <- N.t - now.dormant + now.active
-          D.t <- D.t - now.active + now.dormant
-        }
-        
-        
-        # growth
-        N.t0 <- R.t * N.t * comp.t
-        
-        # separate dispersers, then calculate dispersal, and re-add
-        
-        N.t1 <- N.t0 * (1-d) + disperse(d = d, N = N.t0, M = M, adj.mat = adj.mat)
-        
-        results.N[,,t+1] <- ifelse(N.t1 > .1, N.t1, 0)
-        results.D[,,t+1] <- ifelse(D.t > .1, D.t, 0) 
+    for(t in 1:(tsteps / dt - 1)){
+      # Init or update progress bar
+      if(t == 1) pb <- progress_bar$new(total = (tsteps / dt), force = T)
+      pb$update(ratio = t/(tsteps / dt))
+      
+      N.t <- results.N[,,t]
+      D.t <- results.D[,,t]
+      
+      # if env.type is not static, either randomize it or oscillate
+      if(env.type == "random"){
+        env[,1] <- runif(length(env))
+      }
+      if(env.type == "synchronous"){
+        env[,1] <- synchronize.env(env = env[,1], t = t, period = period)
+      }
+      if(env.type == "asynchronous"){
+        env[,1] <- asynchronize.env(env = env[,1], t = t, period = period)
       }
       
-      # summarize alpha, beta, and gamma diversity for this run
-      alpha <- mean(specnumber(t(results.N[,,tsteps] + 0*results.D[,,tsteps])))
-      gamma <- sum(rowSums(results.N[,,t] + 0*results.D[,,tsteps]) > 0)
-      beta <- gamma / alpha
-      beta <- ifelse(is.nan(beta), 0, beta)
+      if(disturbance == T){
+        if(runif(1) < dist.freq){
+          # randomly choose site to disturb
+          N.t[,sample(1:M, size = ceiling(dist.extent*M), replace = F)] <- 0
+          
+        } 
+      }
       
-      # write results to the matrix
-      res <- rbind(res, cbind(dispersal = d, dormancy = as.numeric(yes.dormancy), alpha = alpha, beta = beta, gamma = gamma))
+      # calculates growth rates for each species (rows) in each site (cols)
+      # dimensions = S x M
+      R.t <- apply(X = env, MARGIN = 1, FUN = R.jx, max.growth, o.comp, sig.comp)
       
-  } 
+      # calculate competition at this time
+      comp.t <- apply(N.t, MARGIN = 2, FUN = competition, a = a)
+      
+      # if there is dormancy, then perform functions
+      if(yes.dormancy){
+        now.dormant <- N.t * apply(X = env, MARGIN = 1, FUN = dormancy, max.dorm, o.comp, sig.comp)
+        now.active <- D.t * apply(X = env, MARGIN = 1, FUN = resuscitate, responsiveness, o.comp, precision)
+        N.t0 <- N.t - now.dormant + now.active
+        D.t <- D.t - now.active + now.dormant
+      }
+      
+      
+      # growth
+      N.t0 <- R.t * N.t * comp.t
+      
+      # separate dispersers, then calculate dispersal, and re-add
+      
+      N.t1 <- N.t0 * (1-d) + disperse(d = d, N = N.t0, M = M, adj.mat = adj.mat)
+      D.t1 <- D.t * (1-d) + disperse(d = d, N = D.t, M = M, adj.mat = adj.mat)
+      
+      results.N[,,t+1] <- ifelse(N.t1 > .1, N.t1, 0)
+      results.D[,,t+1] <- ifelse(D.t1 > .1, D.t1, 0) 
+    }
+    
   
-  
-  return(res)
-  #return(results.N[,,tsteps])
+    # summarize alpha, beta, and gamma diversity for this run
+    alpha <- mean(specnumber(t(results.N[,,tsteps] + 0*results.D[,,tsteps])))
+    gamma <- sum(rowSums(results.N[,,t] + 0*results.D[,,tsteps]) > 0)
+    beta <- gamma / alpha
+    beta <- ifelse(is.nan(beta), 0, beta)
+    
+    # write results to the matrix
+    res <- rbind(res, 
+                 cbind(dispersal = d, 
+                       dormancy = as.numeric(yes.dormancy), 
+                       alpha = alpha, 
+                       beta = beta, 
+                       gamma = gamma))
+  }
+
+
+return(res)
 }
 
 
@@ -252,9 +285,9 @@ run_sim <- function(d, env.type, disturbance, ...){
 
 ```{r}
 set.seed(47405)
-nsims <- 3
+nsims <- 1
 
-S <- 50 # Number of species
+S <- 20 # Number of species
 
 # set up dispersal vector
 # d.list <- as.list(seq(0,1, by = 0.05))
@@ -268,36 +301,43 @@ S <- 50 # Number of species
 #   seq(from = 1, to = 9, by = 4)*1e-2,
 #   seq(from = 1, to = 9, by = 4)*1e-1, 1))
 
-d.list <- list(0, 1e-4, 1e-3, 1e-2, 0.1, 0.5, 1)
-#d.list <- list(0)
+d.list <- list(1e-3, 1e-2, 0.1, 0.5, 1)
+# d.list <- list(1e-3)
 running.out <- matrix(NA, nrow = 0, ncol = 5)
+
+growth.breadth.to <- -0.5
 for(i in 1:nsims){
   print(paste("Simulation",i,"of",nsims,"."))
   # update params
   # density independent growth
-  # max.growth <- runif(S) + 1
-  max.growth <- rep(1.2, S)
+  max.growth <- runif(S) + 1
+  # max.growth <- rep(1.2, S)
   # optimal env conditions
   # o.comp <- runif(S, min = range(env)[1], max = range(env)[2])
-  o.comp <- 1/S * seq(1:S)
+  o.comp <- 1/(S+1) * seq(1:S)
   # niche breadths, 
-  sig.comp <- rep(.2, S)
-  
+  sig.comp <- 1 + growth.breadth.to * max.growth 
+  # sig.comp <- rep(1, S)
+  plot(sig.comp, max.growth)
   
   # dormancy params # these don't really have a big effect on the outcomes in static or random environments
   max.dorm <- .5
   responsiveness <- .5
-  precision <- .5
+  precision <- 1
   
   # beverton-holt alpha
-  a <- 1e-4
+  a <- 1e-5
 
   # disturbance frequency if disturbance
-  dist.freq <- 0.01 # freq of a disturbance
-  dist.extent <- 2/M # what fraction of patches disturbed
+  dist.freq <- 0.05 # freq of a disturbance
+  dist.extent <- 0.1 # what fraction of patches disturbed
   
-  out <- lapply(d.list, FUN = run_sim, env.type = "static", disturbance = T,
-                period = 100, dist.freq, dist.extent)
+  # options for env.type = "static", "random", "synchronous", "asynchronous"
+  # period controls the degree of temporal autocorrelation. 
+  # If period > tsteps, high autocorrelation. If period << tsteps, low temp autocorrelation
+  period = 100
+  out <- lapply(d.list, FUN = run_sim, env.type = "asynchronous", disturbance = F,
+                period, dist.freq, dist.extent)
   # unlist(out)[seq(1:length(unlist(out)))]
   
   for(i in 1:length(out)){
@@ -326,7 +366,7 @@ running.out %>% as_tibble() %>%
   geom_line(alpha = 0.5) +
   theme_bw() +
   facet_grid(scale ~ ., scales = "free_y") +
-  scale_x_continuous() +
+  scale_x_log10() +
   ggsave("figures/diversity-paritioning-and-dispersal.png", width =4, heigh = 8, units = "in")
 ```
 
