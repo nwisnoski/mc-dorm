@@ -1,28 +1,24 @@
 library(tidyverse)
 library(vegan)
 library(progress)
-library(viridis)
-library(adespatial)
-library(igraph)
+#library(viridis)
+#library(adespatial)
+#library(igraph)
 
 ###############################################################################
 rm(list = ls())
 set.seed(47405)
 
 # Define model parameters
-tsteps <- 5000      # Number of time steps in model
+tsteps <- 50000      # Number of time steps in model
 dt <- 1    # precision for model integration (step size)
 M <- 20 # Number of sites
 S <- 20 # Number of species
 ext <- .01 # extinction thresh
+disturb <- 0.001
 
 
 envs <- 1 # Number of environmental variables
-
-# Create Site by Species Matrix (N = active, D = seed bank)
-N <- matrix(0, ncol = S, nrow = M)
-D <- N * 0
-N <- N + 0.1
 
 
 # set up environment (E)
@@ -36,8 +32,8 @@ out.D <- array(NA, c(S, M, tsteps),
                dimnames = list(c(paste0("sp",1:S)), c(paste0("site",1:M)), c(1:tsteps)))
 
 # add active species to sites, seed banks are empty
-out.N[,,1] <- N
-out.D[,,1] <- D
+out.N[,,1] <- .1
+out.D[,,1] <- 0
 
 ###############################################################################
 # Define metacommunity functions
@@ -67,7 +63,7 @@ disperse <- function(d, N, M){
 
 # establish strength of species sorting/local control
 opt.envs <- seq(0, 1, length.out = S) # species optimal environments
-nbreadth <- .8 # as approach infinity, metacom approaches neutrality
+nbreadth <- 1 # as approach infinity, metacom approaches neutrality
 max.R <- 1.2
 a <- 4e-4 # strength of competition
 
@@ -127,9 +123,13 @@ decay <- rep(.0001, S) # Decay rate of dormant propagules
 #   geom_line()
 
 
-d = rep(.15, S)
+d = rep(.4, S)
 for(t in 1:(tsteps-1)){
   
+  if(t == 1) pb <- progress_bar$new(total = tsteps, force = T)
+  
+  # update progress bar
+  pb$update(ratio = t/tsteps)
   # get current abunds
   N.t <- out.N[,,t]
   D.t <- out.D[,,t]
@@ -149,10 +149,16 @@ for(t in 1:(tsteps-1)){
   N.t1 <- N.t0 + disperse(d, N.t0, M) - (d * N.t0)
   D.t1 <- D.t + disperse(d, D.t0, M) - (d * D.t0)
   
+  # patch disturbance
+  N.t1[, which(rbernoulli(M, p = disturb) == 1)] <- 0
+  
   out.N[,,t+1] <- ifelse(N.t1 > ext, N.t1, 0)
   out.D[,,t+1] <- ifelse(D.t1 > ext, D.t1, 0) 
   
 }
 
-matplot(t(out.N[,,]), type = 'l')
-t(out.N[,,tsteps])
+
+
+# extract SxS matrix
+comm <- decostand(t(out.N[,,tsteps]), method = "hellinger")
+plot(rda(comm ~ E))
