@@ -16,7 +16,7 @@ dt <- 1    # precision for model integration (step size)
 M <- 20 # Number of sites
 S <- 20 # Number of species
 ext <- .01 # extinction thresh
-disturb <- 0.000
+disturb <- 0.0001
 
 
 envs <- 1 # Number of environmental variables
@@ -63,9 +63,9 @@ max.R <- 1.2
 a <- 4e-4 # strength of competition
 
 d <- rep(.3, S) # Dispersal rates
-decay <- rep(.0001, S) # Decay rate of dormant propagules
+decay <- rep(.00001, S) # Decay rate of dormant propagules
 dorm <- rep(0.0, S) # Propensity to enter dormancy
-activ <- rep(.01, S) # Reactivation rate
+activ <- rep(0.1, S) # Reactivation rate
 
 ###############################################################################
 
@@ -74,8 +74,8 @@ activ <- rep(.01, S) # Reactivation rate
 disp.grad <- c(0, .001, .005, 0.01, 0.02, 0.05, 0.07, 0.08, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
 # disp.grad <- c(0, .005, 0.01, 0.05, 0.1, 0.5, 1)
 # 
-# # 1 - dispersal, 2-4 - alpha, beta, gamma, 5 - percent env,
-out.sum <- matrix(NA, nrow = length(disp.grad), ncol = 5)
+# # 1 - dispersal, 2-4 - alpha, beta, gamma, 
+out.sum <- matrix(NA, nrow = length(disp.grad), ncol = 4)
 i = 1
 comms.out <- list(NA)
 # loop over dipsersal rates
@@ -131,21 +131,32 @@ for(t in 1:(tsteps-1)){
 }
 
 
-
+# Creat path for sim output
+sim.path <- file.path("figures", "sim_output", 
+            paste0("dispersal", mean(d), "-dorm",mean(dorm),"-act",mean(activ),"-dist",mean(disturb)))
+if(!dir.exists(sim.path)) dir.create(sim.path, recursive = T)
 # extract SxS matrix
-comms.out[[i]] <- t(out.N[,,tsteps])
-comm <- decostand(t(out.N[,,tsteps]), method = "hellinger")
+comm <- t(out.N[,,tsteps])
+saveRDS(comm, file = file.path(sim.path, "model-output.rds"))
+comms.out[[i]] <- comm
+comm[is.na(comm)] <- 0
+comm <- decostand(comm, method = "hellinger")
 comm
-matplot(t(out.N[,6,]), type = 'l')
+
+#plot patch 6 just to show local dynamics example
+autoplot.zoo(t(out.N[,6,]), facet = NULL) + 
+  labs(x = "Time", y = "Abundance") + 
+  theme_bw() +
+  ggsave(file.path(sim.path, "local_dynamics.png"), width = 8, height = 6, units = "in", dpi = 500)
 
 # specnumber(comm)
 # specnumber(colSums(comm))
-ord <- rda(comm ~ E); plot(ord)
-percent.env <- as.numeric(eigenvals(ord)[1]/sum(eigenvals(ord)))
+# ord <- rda(comm ~ E); plot(ord)
+#percent.env <- as.numeric(eigenvals(ord)[1]/sum(eigenvals(ord)))
 (alpha <- vegetarian::d(comm, lev = "alpha"))
 (beta <- vegetarian::d(comm, lev = "beta"))
 (gamma <- vegetarian::d(comm, lev = "gamma"))
-out.sum[i,] <- c(d, alpha, beta, gamma, percent.env)
+out.sum[i,] <- c(d, alpha, beta, gamma)
 i <- i + 1
 }
 
@@ -158,12 +169,13 @@ i <- i + 1
 # }
 
 out.sum
-colnames(out.sum) <- c("dispersal", "alpha", "beta", "gamma", "env")
-as.data.frame(out.sum) %>% select(-env) %>% 
+colnames(out.sum) <- c("dispersal", "alpha", "beta", "gamma")
+as.data.frame(out.sum) %>% 
   gather(alpha, beta, gamma, key = scale, value = diversity) %>%
   ggplot(aes(dispersal, diversity, color = scale)) +
   geom_point(size = 2, alpha = 0.5) +
   geom_line() + 
   theme_bw() +
-  ggsave(paste0("figures/diversity-dispersal-dorm",mean(dorm),".png"), 
-         width = 4, height = 3, units = "in", dpi = 300)
+  ggsave(file.path("figures", "diversity-dispersal", 
+paste0("dorm",mean(dorm),"-act",mean(activ),"-dist",mean(disturb),".png")), 
+         width = 4, height = 3, units = "in", dpi = 500)
