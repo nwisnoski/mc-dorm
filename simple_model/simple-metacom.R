@@ -2,6 +2,7 @@ library(tidyverse)
 library(vegan)
 library(progress)
 library(vegetarian)
+library(zoo)
 #library(viridis)
 #library(adespatial)
 #library(igraph)
@@ -64,22 +65,27 @@ a <- 4e-4 # strength of competition
 
 d <- rep(.3, S) # Dispersal rates
 decay <- rep(.00001, S) # Decay rate of dormant propagules
-dorm <- rep(0.0, S) # Propensity to enter dormancy
+dorm <- rep(0.5, S) # Propensity to enter dormancy
 activ <- rep(0.1, S) # Reactivation rate
 
 ###############################################################################
 
-#d <- rep(0.001, S)
+dorm.grad <- c(.001, .005, 0.01, 0.05, 0.2, 0.6, 0.9, 1)
 #disturb <- 0.001
+for(dorm in dorm.grad){
+
+
 disp.grad <- c(0, .001, .005, 0.01, 0.02, 0.05, 0.07, 0.08, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
 # disp.grad <- c(0, .005, 0.01, 0.05, 0.1, 0.5, 1)
-# 
+#
+
 # # 1 - dispersal, 2-4 - alpha, beta, gamma, 
 out.sum <- matrix(NA, nrow = length(disp.grad), ncol = 4)
 i = 1
 comms.out <- list(NA)
 # loop over dipsersal rates
 for(d in disp.grad){
+
   set.seed(47405)
   # initialize result array, Species X Sites X Time 
   out.N <- array(NA, c(S, M, tsteps), 
@@ -168,6 +174,8 @@ i <- i + 1
 #   i <- i + 1
 # }
 
+
+
 out.sum
 colnames(out.sum) <- c("dispersal", "alpha", "beta", "gamma")
 as.data.frame(out.sum) %>% 
@@ -179,3 +187,5 @@ as.data.frame(out.sum) %>%
   ggsave(file.path("figures", "diversity-dispersal", 
 paste0("dorm",mean(dorm),"-act",mean(activ),"-dist",mean(disturb),".png")), 
          width = 4, height = 3, units = "in", dpi = 500)
+
+}
