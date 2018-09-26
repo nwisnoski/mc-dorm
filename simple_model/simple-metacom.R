@@ -3,7 +3,7 @@ library(vegan)
 library(progress)
 library(vegetarian)
 library(zoo)
-#library(viridis)
+library(viridis)
 #library(adespatial)
 #library(igraph)
 
@@ -12,12 +12,12 @@ rm(list = ls())
 set.seed(47405)
 
 # Define model parameters
-tsteps <- 50000      # Number of time steps in model
+tsteps <- 2000      # Number of time steps in model
 dt <- 1    # precision for model integration (step size)
 M <- 20 # Number of sites
 S <- 20 # Number of species
 ext <- .01 # extinction thresh
-disturb <- 0.0001
+disturb <- 0.00
 
 
 envs <- 1 # Number of environmental variables
@@ -70,122 +70,138 @@ activ <- rep(0.1, S) # Reactivation rate
 
 ###############################################################################
 
-dorm.grad <- c(.001, .005, 0.01, 0.05, 0.2, 0.6, 0.9, 1)
-#disturb <- 0.001
+dorm.grad <- c(0, .001, .005, 0.01, 0.05, 0.2, 0.6, 0.9, 1)
+disp.grad <- c(0, .001, .005, 0.01, 0.02, 0.05, 0.07, 0.08, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
+# dorm.grad <- c(0, .01, .1, 1)
+# disp.grad <- c(0, 0.01, 0.1, 1)
+
+# # 1 - dispersal, 2 - dorm, 3-5 - alpha, beta, gamma, 
+out.sum <- matrix(NA, nrow = length(disp.grad)*length(dorm.grad), ncol = 5)
+i = 1
+loops <- length(out.sum)
+comms.out <- list(NA)
+
+# loop over dorm rates
 for(dorm in dorm.grad){
 
-
-disp.grad <- c(0, .001, .005, 0.01, 0.02, 0.05, 0.07, 0.08, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
-# disp.grad <- c(0, .005, 0.01, 0.05, 0.1, 0.5, 1)
-#
-
-# # 1 - dispersal, 2-4 - alpha, beta, gamma, 
-out.sum <- matrix(NA, nrow = length(disp.grad), ncol = 4)
-i = 1
-comms.out <- list(NA)
-# loop over dipsersal rates
-for(d in disp.grad){
-
-  set.seed(47405)
-  # initialize result array, Species X Sites X Time 
-  out.N <- array(NA, c(S, M, tsteps), 
-                 dimnames = list(c(paste0("sp",1:S)), c(paste0("site",1:M)), c(1:tsteps)))
-  out.D <- array(NA, c(S, M, tsteps),
-                 dimnames = list(c(paste0("sp",1:S)), c(paste0("site",1:M)), c(1:tsteps)))
+  # loop over dipsersal rates
+  for(d in disp.grad){
+    
+    if(i == 1) pb <- progress_bar$new(total = loops, force = T)
+    
+    # update progress bar
+    pb$update(ratio = i/loops)
   
-  # add active species to sites, seed banks are empty
-  out.N[,,1] <- 1
-  out.D[,,1] <- 0
+    set.seed(47405)
+    # initialize result array, Species X Sites X Time 
+    out.N <- array(NA, c(S, M, tsteps), 
+                   dimnames = list(c(paste0("sp",1:S)), c(paste0("site",1:M)), c(1:tsteps)))
+    out.D <- array(NA, c(S, M, tsteps),
+                   dimnames = list(c(paste0("sp",1:S)), c(paste0("site",1:M)), c(1:tsteps)))
+    
+    # add active species to sites, seed banks are empty
+    out.N[,,1] <- 1
+    out.D[,,1] <- 0
+    
+      for(t in 1:(tsteps-1)){
+        
+        # if(t == 1) pb <- progress_bar$new(total = tsteps, force = T)
+        
+        # update progress bar
+        # pb$update(ratio = t/(tsteps))
+        # get current abunds
+        N.t <- out.N[,,t]
+        D.t <- out.D[,,t]
+        
+        # calculates growth rates for each species (rows) in each site (cols)
+        # dimensions = S x M
+        R.t <- apply(X = E, MARGIN = 1, FUN = R.jx, max.R, opt.envs, nbreadth)
+        
+        # dormancy transitions
+        # previous + dormancy - reactivation
+        D.t1 <- D.t + (N.t * dorm) - (D.t * activ)
+        # previous + reactivation - dormancy
+        N.t1 <- N.t + (D.t * activ) - (N.t * dorm)
+        
+        # calculate competition at this time
+        comp.t <- apply(N.t1, MARGIN = 2, FUN = competition, a = a)
+        
+        # growth and seed bank decay
+        N.t2 <- R.t * N.t1 * comp.t
+        D.t2 <- D.t1 - decay * D.t1
+        
+        # calculate immigration and then remove emigrants
+        N.t3 <- N.t2 + disperse(d, N.t2, M) - (d * N.t2)
+        D.t3 <- D.t2 + disperse(d, D.t2, M) - (d * D.t2)
+        
+        # patch disturbance
+        N.t3[, which(rbernoulli(M, p = disturb) == 1)] <- 0
+        
+        out.N[,,t+1] <- ifelse(N.t3 > ext, N.t3, 0)
+        out.D[,,t+1] <- ifelse(D.t3 > ext, D.t3, 0) 
+        
+      }
   
-for(t in 1:(tsteps-1)){
   
-  if(t == 1) pb <- progress_bar$new(total = tsteps, force = T)
+  # Creat path for sim output
+  sim.path <- file.path("figures", "sim_output", 
+              paste0("dispersal", mean(d), "-dorm",mean(dorm),"-act",mean(activ),"-dist",mean(disturb)))
+  if(!dir.exists(sim.path)) dir.create(sim.path, recursive = T)
+  # extract SxS matrix
+  comm <- t(out.N[,,tsteps])
+  saveRDS(comm, file = file.path(sim.path, "model-output.rds"))
+  comms.out[[i]] <- comm
+  comm[is.na(comm)] <- 0
+  comm <- decostand(comm, method = "hellinger")
+  comm
   
-  # update progress bar
-  pb$update(ratio = t/tsteps)
-  # get current abunds
-  N.t <- out.N[,,t]
-  D.t <- out.D[,,t]
+  #plot patch 6 just to show local dynamics example
+  # autoplot.zoo(t(out.N[,6,]), facet = NULL) + 
+  #   labs(x = "Time", y = "Abundance") + 
+  #   theme_bw() +
+  #   ggsave(file.path(sim.path, "local_dynamics.png"), width = 8, height = 6, units = "in", dpi = 500)
+  # 
+  # specnumber(comm)
+  # specnumber(colSums(comm))
+  # ord <- rda(comm ~ E); plot(ord)
+  #percent.env <- as.numeric(eigenvals(ord)[1]/sum(eigenvals(ord)))
+  (alpha <- vegetarian::d(comm, lev = "alpha"))
+  (beta <- vegetarian::d(comm, lev = "beta"))
+  (gamma <- vegetarian::d(comm, lev = "gamma"))
   
-  # calculates growth rates for each species (rows) in each site (cols)
-  # dimensions = S x M
-  R.t <- apply(X = E, MARGIN = 1, FUN = R.jx, max.R, opt.envs, nbreadth)
-  
-  # dormancy transitions
-  # previous + dormancy - reactivation
-  D.t1 <- D.t + (N.t * dorm) - (D.t * activ)
-  # previous + reactivation - dormancy
-  N.t1 <- N.t + (D.t * activ) - (N.t * dorm)
-  
-  # calculate competition at this time
-  comp.t <- apply(N.t1, MARGIN = 2, FUN = competition, a = a)
-  
-  # growth and seed bank decay
-  N.t2 <- R.t * N.t1 * comp.t
-  D.t2 <- D.t1 - decay * D.t1
-  
-  # calculate immigration and then remove emigrants
-  N.t3 <- N.t2 + disperse(d, N.t2, M) - (d * N.t2)
-  D.t3 <- D.t2 + disperse(d, D.t2, M) - (d * D.t2)
-  
-  # patch disturbance
-  N.t3[, which(rbernoulli(M, p = disturb) == 1)] <- 0
-  
-  out.N[,,t+1] <- ifelse(N.t3 > ext, N.t3, 0)
-  out.D[,,t+1] <- ifelse(D.t3 > ext, D.t3, 0) 
-  
+  # write out dispersal, dormancy, and diversity
+  out.sum[i,] <- c(d, dorm, alpha, beta, gamma)
+  i <- i + 1
+  }
 }
-
-
-# Creat path for sim output
-sim.path <- file.path("figures", "sim_output", 
-            paste0("dispersal", mean(d), "-dorm",mean(dorm),"-act",mean(activ),"-dist",mean(disturb)))
-if(!dir.exists(sim.path)) dir.create(sim.path, recursive = T)
-# extract SxS matrix
-comm <- t(out.N[,,tsteps])
-saveRDS(comm, file = file.path(sim.path, "model-output.rds"))
-comms.out[[i]] <- comm
-comm[is.na(comm)] <- 0
-comm <- decostand(comm, method = "hellinger")
-comm
-
-#plot patch 6 just to show local dynamics example
-autoplot.zoo(t(out.N[,6,]), facet = NULL) + 
-  labs(x = "Time", y = "Abundance") + 
-  theme_bw() +
-  ggsave(file.path(sim.path, "local_dynamics.png"), width = 8, height = 6, units = "in", dpi = 500)
-
-# specnumber(comm)
-# specnumber(colSums(comm))
-# ord <- rda(comm ~ E); plot(ord)
-#percent.env <- as.numeric(eigenvals(ord)[1]/sum(eigenvals(ord)))
-(alpha <- vegetarian::d(comm, lev = "alpha"))
-(beta <- vegetarian::d(comm, lev = "beta"))
-(gamma <- vegetarian::d(comm, lev = "gamma"))
-out.sum[i,] <- c(d, alpha, beta, gamma)
-i <- i + 1
-}
-
-#   comms.out[[i]] <- t(out.N[,,tsteps])
-#   alpha <- mean(specnumber(t(out.N[,,tsteps])))
-#   gamma <- specnumber(colSums(t(out.N[,,tsteps])))
-#   beta <- round(gamma / alpha, 2)
-#   div.part[i,] <- c(d, alpha, beta, gamma)
-#   i <- i + 1
-# }
-
 
 
 out.sum
-colnames(out.sum) <- c("dispersal", "alpha", "beta", "gamma")
+colnames(out.sum) <- c("Dispersal", "Dormancy", "Alpha", "Beta", "Gamma")
 as.data.frame(out.sum) %>% 
-  gather(alpha, beta, gamma, key = scale, value = diversity) %>%
-  ggplot(aes(dispersal, diversity, color = scale)) +
-  geom_point(size = 2, alpha = 0.5) +
-  geom_line() + 
-  theme_bw() +
-  ggsave(file.path("figures", "diversity-dispersal", 
-paste0("dorm",mean(dorm),"-act",mean(activ),"-dist",mean(disturb),".png")), 
-         width = 4, height = 3, units = "in", dpi = 500)
+  gather(Alpha, Beta, Gamma, key = Scale, value = Diversity) %>%
+  mutate(Dormancy = factor(Dormancy, levels = dorm.grad, ordered = T)) %>% 
+  ggplot(aes(Dispersal, Diversity, color = Dormancy)) +
+  # geom_point(size = 2, alpha = 0.5) +
+  geom_line(alpha = 0.6) + 
+  facet_grid(Scale ~ ., scales = "free_y") +
+  theme_minimal() + 
+  scale_x_continuous(limits = c(0,0.5)) +
+  scale_color_viridis(discrete = T, begin = .2, end = .8, direction = -1) + 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = "grey90")) +
+  ggsave(file.path("figures", "diversity-dispersal", paste0("diversity-dispersal_dist",disturb,".png")), 
+         width = 4, height = 4, units = "in", dpi = 500)
 
-}
+
+as.data.frame(out.sum) %>% 
+  gather(Alpha, Beta, Gamma, key = Scale, value = Diversity) %>%
+  mutate(Dormancy = factor(Dormancy, levels = dorm.grad, ordered = T)) %>% 
+  filter(Scale == "Beta") %>% 
+  ggplot(aes(Dispersal, Diversity, color = Dormancy)) +
+  # geom_point(size = 2, alpha = 0.5) +
+  geom_line(alpha = 0.6) + 
+  theme_minimal() + 
+  scale_x_continuous(limits = c(0,0.2)) +
+  scale_y_continuous(limits = c(1,5)) +
+  scale_color_viridis(discrete = T, begin = .2, end = .8, direction = -1) + 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = "grey90"))
