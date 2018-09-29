@@ -17,8 +17,8 @@ dt <- 1    # precision for model integration (step size)
 M <- 20 # Number of sites
 S <- 20 # Number of species
 ext <- .01 # extinction thresh
-disturb <- 0.001
-env.type <- "static" # "static", "fluctuating", "random" okay  
+disturb <- 0.00
+env.type <- "fluctuating" # "static", "fluctuating", "random" okay  
 spatial.synchrony <- 0 #range from 0 to 1, what fraction of patches have the same environment
 
 envs <- 1 # Number of environmental variables
@@ -73,7 +73,7 @@ max.R <- 1.2
 a <- 4e-4 # strength of competition
 
 d <- rep(.05, S) # Dispersal rates
-decay <- rep(.00001, S) # Decay rate of dormant propagules
+decay <- rep(.000001, S) # Decay rate of dormant propagules
 dorm <- rep(0.5, S) # Propensity to enter dormancy
 activ <- rep(0.1, S) # Reactivation rate
 
@@ -81,7 +81,7 @@ ddcov <- 0 # 0 for negative, 1 for positive
 
 ###############################################################################
 
-dorm.grad <- c(0, .001, .005, 0.01, 0.02, 0.05, 0.07, 0.08, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
+dorm.grad <- c(0, .001, .003, .004, .005, 0.01, 0.02, 0.05, 0.07, 0.08, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
 disp.grad <- c(0, .001, .005, 0.01, 0.02, 0.05, 0.07, 0.08, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
 # dorm.grad <- c(0, .01, .1, 1)
 # disp.grad <- c(0, 0.01, 0.1, 1)
@@ -159,13 +159,13 @@ for(dorm in dorm.grad){
   # Creat path for sim output
   sim.path <- file.path("figures", "sim_output", 
               paste0("dispersal", mean(d), "-dorm",mean(dorm),"-act",mean(activ),"-dist",mean(disturb)))
-  if(!dir.exists(sim.path)) dir.create(sim.path, recursive = T)
+  #if(!dir.exists(sim.path)) dir.create(sim.path, recursive = T)
   # extract SxS matrix
   comm <- t(out.N[,,tsteps])
-  saveRDS(comm, file = file.path(sim.path, "model-output.rds"))
+  #saveRDS(comm, file = file.path(sim.path, "model-output.rds"))
   comms.out[[i]] <- comm
   comm[is.na(comm)] <- 0
-  comm <- decostand(comm, method = "hellinger")
+  #comm <- decostand(comm, method = "hellinger")
   comm
   
   #plot patch 6 just to show local dynamics example
@@ -196,15 +196,15 @@ as.data.frame(out.sum) %>%
   mutate(Dormancy = factor(Dormancy, levels = dorm.grad, ordered = T)) %>% 
   ggplot(aes(Dispersal, Diversity, color = Dormancy)) +
   # geom_point(size = 2, alpha = 0.5) +
-  geom_line(alpha = 0.8) + 
+  geom_line(size = .5, alpha = 0.8) + 
   facet_grid(Scale ~ ., scales = "free_y") +
   theme_minimal() + 
-  scale_x_continuous(limits = c(0,1)) +
+  scale_x_continuous(limits = c(0,.5)) +
   scale_color_viridis(discrete = T, begin = .2, end = .8, direction = -1) + 
   theme(panel.grid = element_blank(), panel.background = element_rect(color = "grey90"),
         legend.text = element_text(size = 8), legend.key.size = unit(0.3, "cm")) +
   ggsave(file.path("figures", "diversity-dispersal", paste0(ifelse(ddcov, "pos", "neg"),"-ddcov"),
-                   paste0("diversity-dispersal_",env.type,"_dist",disturb,"_period",env.period,".png")), 
+                   paste0("diversity-dispersal_",env.type,"_dist",disturb,"_period",env.period,".png")),
          width = 4, height = 4, units = "in", dpi = 500)
 
 
@@ -216,7 +216,8 @@ as.data.frame(out.sum) %>%
   # geom_point(size = 2, alpha = 0.5) +
   geom_line(alpha = 0.6) +
   theme_minimal() +
-  scale_x_continuous(limits = c(0,0.2)) +
+  scale_x_continuous(limits = c(0,1)) +
   scale_y_log10() +
   scale_color_viridis(discrete = T, begin = .2, end = .8, direction = -1) +
   theme(panel.grid = element_blank(), panel.background = element_rect(color = "grey90"))
+
