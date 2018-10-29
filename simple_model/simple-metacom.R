@@ -17,8 +17,8 @@ dt <- 1    # precision for model integration (step size)
 M <- 20 # Number of sites
 S <- 20 # Number of species
 ext <- .01 # extinction thresh
-disturb <- 0.001
-env.type <- "static" # "static", "fluctuating", "random" okay  
+disturb <- 0.00
+env.type <- "random" # "static", "fluctuating", "random" okay  
 spatial.synchrony <- 0 #range from 0 to 1, what fraction of patches have the same environment
 
 envs <- 1 # Number of environmental variables
@@ -82,9 +82,7 @@ activ <- rep(0.1, S) # Reactivation rate
 ###############################################################################
 
 dorm.grad <- c(0, 0.7)
-disp.grad <- c(0, .001, .002, .005, .008, .009,
-               0.01, 0.02, .03, .04, 0.05, .06, 0.07, 0.08,
-               0.1, .12, .15, .175, 0.2, .225, .25, .275, 0.3,.35, 0.4,.45, 0.5)
+disp.grad <- seq(0, .5, by = 0.01)
 # dorm.grad <- c(0, .01, .1, 1)
 
 # # 1 - ddcov, 2 - dispersal, 3 - dorm, 4-6 - alpha, beta, gamma, 
