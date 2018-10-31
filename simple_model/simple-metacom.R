@@ -12,13 +12,13 @@ rm(list = ls())
 set.seed(47405)
 
 # Define model parameters
-tsteps <- 5000      # Number of time steps in model
+tsteps <- 10000      # Number of time steps in model
 dt <- 1    # precision for model integration (step size)
 M <- 20 # Number of sites
 S <- 20 # Number of species
 ext <- .01 # extinction thresh
 disturb <- 0.00
-env.type <- "random" # "static", "fluctuating", "random" okay  
+env.type <- "fluctuating" # "static", "fluctuating", "random" okay  
 spatial.synchrony <- 0 #range from 0 to 1, what fraction of patches have the same environment
 
 envs <- 1 # Number of environmental variables
@@ -194,14 +194,15 @@ colnames(out.sum) <- c("DDcov", "Dispersal", "Dormancy", "Alpha", "Beta", "Gamma
 as.data.frame(out.sum) %>% 
   gather(Alpha, Beta, Gamma, key = Scale, value = Diversity) %>%
   mutate(Dormancy = factor(Dormancy, levels = dorm.grad, ordered = T)) %>% 
-  mutate(DDcov = ifelse(DDcov == 0, "Negative", "Positive")) %>% 
-  ggplot(aes(Dispersal, Diversity, color = Dormancy)) +
+  mutate(DDcov = ifelse(DDcov == 0, "Negative Covariation", "Positive Covariation")) %>% 
+  ggplot(aes(Dispersal, Diversity, color = Dormancy, linetype = Dormancy)) +
   geom_line(size = .5, alpha = 0.8, show.legend = F) + 
   facet_grid(Scale ~ DDcov, scales = "free_y") +
   theme_minimal() + 
   scale_x_continuous(limits = c(0,.5)) +
-  scale_color_viridis(discrete = T, begin = .2, end = .8, direction = -1) + 
-  theme(panel.grid = element_blank(), panel.background = element_rect(color = "grey90"),
+  scale_color_manual(values = c("grey60", "grey20")) + 
+  scale_linetype_manual(values = c("longdash", "solid")) + 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = "grey80"),
         legend.text = element_text(size = 8), legend.key.size = unit(0.3, "cm")) +
   ggsave(file.path("figures", "diversity-dispersal", paste0("diversity-dispersal_",env.type,"_dist",disturb,"_period",env.period,".png")), width = 4, height = 4, units = "in", dpi = 500)
   # ggsave(file.path("figures", "diversity-dispersal", paste0(ifelse(ddcov, "pos", "neg"),"-ddcov"),
